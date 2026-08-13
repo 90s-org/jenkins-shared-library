@@ -11,7 +11,7 @@ def call (Map configMap){
                     script{
                         sh """
                             echo 'Building..'
-                            sh 'printenv'
+                            printenv
                         """
                     }
                     
