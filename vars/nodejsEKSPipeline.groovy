@@ -52,9 +52,9 @@ def call (Map configMap){
                             sh """
                                 npm test
                             """
-                            updateGitHubStatus('unit-tests', 'SUCCESS', 'Unit tests passed')
+                            updateGitHubStatus('SUCCESS', 'Unit tests passed', 'unit-tests')
                         } catch (Exception e) {
-                            updateGitHubStatus('unit-tests', 'FAILURE', 'Unit tests failed')
+                            updateGitHubStatus('FAILURE', 'Unit tests failed', 'unit-tests')
                             throw e
                         }
                     } 
@@ -112,10 +112,10 @@ def call (Map configMap){
                                     fi
                                 '''
                             }
-                            updateGitHubStatus('library-scan', 'SUCCESS', 'No high/critical dependency alerts')
+                            updateGitHubStatus('SUCCESS', 'Library scan passed', 'library-scan')
                         }
                         catch (Exception e){
-                            updateGitHubStatus('library-scan', 'FAILURE', 'High/critical dependency alerts found')
+                            updateGitHubStatus('FAILURE', 'Library scan failed', 'library-scan')
                             throw e
                         }
                     }
