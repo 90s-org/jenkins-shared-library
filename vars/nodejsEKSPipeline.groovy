@@ -82,40 +82,42 @@ def call (Map configMap){
             } */
             stage('Check Dependabot Alerts') {
                 steps {
-                    try{
-                        withCredentials([string(credentialsId: 'github-token', variable: 'GH_TOKEN')]) {
-                            sh '''
-                                set -e
+                    script {
+                        try{
+                            withCredentials([string(credentialsId: 'github-token', variable: 'GH_TOKEN')]) {
+                                sh '''
+                                    set -e
 
-                                REPO="${org}/${component}"
+                                    REPO="${org}/${component}"
 
-                                curl -s -L \
-                                -H "Accept: application/vnd.github+json" \
-                                -H "Authorization: Bearer ${GH_TOKEN}" \
-                                -H "X-GitHub-Api-Version: 2026-03-10" \
-                                "https://api.github.com/repos/${REPO}/dependabot/alerts?state=open" \
-                                -o alerts.json
+                                    curl -s -L \
+                                    -H "Accept: application/vnd.github+json" \
+                                    -H "Authorization: Bearer ${GH_TOKEN}" \
+                                    -H "X-GitHub-Api-Version: 2026-03-10" \
+                                    "https://api.github.com/repos/${REPO}/dependabot/alerts?state=open" \
+                                    -o alerts.json
 
-                                echo "---- Open Dependabot Alerts ----"
-                                jq -r '.[] | "\\(.number)\\t\\(.security_vulnerability.severity)\\t\\(.dependency.package.name)\\t\\(.security_advisory.ghsa_id)"' alerts.json
+                                    echo "---- Open Dependabot Alerts ----"
+                                    jq -r '.[] | "\\(.number)\\t\\(.security_vulnerability.severity)\\t\\(.dependency.package.name)\\t\\(.security_advisory.ghsa_id)"' alerts.json
 
-                                HIGH_CRITICAL_COUNT=$(jq '[.[] | select(.security_vulnerability.severity == "high" or .security_vulnerability.severity == "critical")] | length' alerts.json)
+                                    HIGH_CRITICAL_COUNT=$(jq '[.[] | select(.security_vulnerability.severity == "high" or .security_vulnerability.severity == "critical")] | length' alerts.json)
 
-                                echo "High/Critical alert count: ${HIGH_CRITICAL_COUNT}"
+                                    echo "High/Critical alert count: ${HIGH_CRITICAL_COUNT}"
 
-                                if [ "$HIGH_CRITICAL_COUNT" -gt 0 ]; then
-                                    echo "❌ Found ${HIGH_CRITICAL_COUNT} High/Critical severity dependency alert(s). Failing build."
-                                    exit 1
-                                else
-                                    echo "✅ No High/Critical dependency alerts found."
-                                fi
-                            '''
+                                    if [ "$HIGH_CRITICAL_COUNT" -gt 0 ]; then
+                                        echo "❌ Found ${HIGH_CRITICAL_COUNT} High/Critical severity dependency alert(s). Failing build."
+                                        exit 1
+                                    else
+                                        echo "✅ No High/Critical dependency alerts found."
+                                    fi
+                                '''
+                            }
+                            updateGitHubStatus('library-scan', 'SUCCESS', 'No high/critical dependency alerts')
                         }
-                        updateGitHubStatus('library-scan', 'SUCCESS', 'No high/critical dependency alerts')
-                    }
-                    catch (Exception e){
-                        updateGitHubStatus('library-scan', 'FAILURE', 'High/critical dependency alerts found')
-                        throw e
+                        catch (Exception e){
+                            updateGitHubStatus('library-scan', 'FAILURE', 'High/critical dependency alerts found')
+                            throw e
+                        }
                     }
                 }
             }
