@@ -3,8 +3,10 @@ def updateCommitStatus(String state, String description, String context = 'Jenki
         def repoUrl = sh(script: 'git remote get-url origin', returnStdout: true).trim()
         def repoPath = repoUrl.replaceAll(/.*github\.com[\/:]/, '').replaceAll(/\.git$/, '')
 
+        // GitHub's Commit Status API only accepts lowercase state values
+        // (error|failure|pending|success); anything else gets a 422.
         withEnv([
-            "COMMIT_STATE=${state}",
+            "COMMIT_STATE=${state.toLowerCase()}",
             "COMMIT_DESC=${description}",
             "COMMIT_CONTEXT=${context}",
             "REPO_PATH=${repoPath}",
