@@ -120,6 +120,30 @@ def call (Map configMap){
                     }
                 }
             }
+            stage('Trivy OS + Dockerfile Scan') {
+                steps {
+                    script {
+                        def osScan = sh(script: """
+                            trivy image --scanners vuln --pkg-types os \
+                            --severity HIGH,CRITICAL --exit-code 1 \
+                            --format table --output trivy-os-report.txt \
+                            160885265516.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion}
+                        """, returnStatus: true)
+
+                        def dockerfileScan = sh(script: """
+                            trivy config --severity HIGH,CRITICAL --exit-code 1 \
+                            --format table --output trivy-dockerfile-report.txt \
+                            Dockerfile
+                        """, returnStatus: true)
+
+                        archiveArtifacts artifacts: 'trivy-*.txt', allowEmptyArchive: true
+
+                        if (osScan != 0 || dockerfileScan != 0) {
+                            error("Trivy found HIGH/CRITICAL issues — OS scan exit: ${osScan}, Dockerfile scan exit: ${dockerfileScan}")
+                        }
+                    }
+                }
+            }
             stage('Deploy') {
                 when {
                     // Evaluates the boolean parameter directly
