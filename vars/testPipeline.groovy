@@ -8,7 +8,13 @@ def call (Map configMap){
         stages {
             stage('Build') {
                 steps {
-                    echo 'Building..'
+                    script{
+                        sh """
+                            echo 'Building..'
+                            sh 'printenv'
+                        """
+                    }
+                    
                 }
             }
             stage('Test') {
