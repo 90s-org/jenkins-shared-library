@@ -5,8 +5,17 @@ def call (Map configMap){
                 label 'ROBOSHOP'
             }
         }
+        parameters {
+            // 'dev' is first, so it's the default when this build is triggered
+            // automatically by a push to main (no parameters supplied).
+            choice(name: 'ENVIRONMENT', choices: ['dev', 'sit', 'uat', 'prod'], description: 'Environment to deploy to')
+            string(name: 'COMMIT_ID', defaultValue: '', description: 'Commit SHA to promote (required for sit/uat/prod)')
+            string(name: 'COMPONENT', defaultValue: 'catalogue', description: 'Component to deploy')
+            string(name: 'PROJECT', defaultValue: 'roboshop', description: 'Project name')
+        }
         environment {
             def appVersion = ""
+            def shortCommit = ""
             acc_id = "160885265516"
             project = configMap.get("project")
             component = configMap.get("component")
@@ -16,10 +25,13 @@ def call (Map configMap){
             disableConcurrentBuilds()
             timeout(time: 15, unit: 'MINUTES')
         }
-        // Re-verify the merged commit in dev: redeploy the image built on the
-        // feature branch and re-run api-tests against it before it's considered good.
         stages {
+            // Re-verify the merged commit in dev: redeploy the image built on the
+            // feature branch and re-run api-tests against it before it's considered good.
             stage('read-version'){
+                when {
+                    expression { params.ENVIRONMENT == 'dev' }
+                }
                 steps{
                     script {
                         def packageJson = readJSON file: 'package.json'
@@ -29,6 +41,9 @@ def call (Map configMap){
                 }
             }
             stage('dev-deploy') {
+                when {
+                    expression { params.ENVIRONMENT == 'dev' }
+                }
                 steps {
                     script {
                         try {
@@ -56,6 +71,9 @@ def call (Map configMap){
                 }
             }
             stage('api-tests') {
+                when {
+                    expression { params.ENVIRONMENT == 'dev' }
+                }
                 steps {
                     script {
                         try {
@@ -72,6 +90,96 @@ def call (Map configMap){
                     }
                 }
             }
+            // Dev-deploy and api-tests passed against this merge commit — promote the
+            // same image by retagging it with the short commit SHA in ECR.
+            stage('promote-image') {
+                when {
+                    expression { params.ENVIRONMENT == 'dev' }
+                }
+                steps {
+                    script {
+                        try {
+                            shortCommit = env.GIT_COMMIT.take(7)
+                            withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                                sh """
+                                    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${acc_id}.dkr.ecr.us-east-1.amazonaws.com
+
+                                    docker pull ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion}
+                                    docker tag ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion} ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${shortCommit}
+                                    docker push ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${shortCommit}
+                                """
+                            }
+                            utils.updateCommitStatus('success', "Promoted image as ${shortCommit}", 'promote-image')
+                        }
+                        catch (Exception e) {
+                            utils.updateCommitStatus('failure', 'Image promotion failed', 'promote-image')
+                            throw e
+                        }
+                    }
+                }
+            }
+            // Manual promotion path: pick ENVIRONMENT (sit/uat/prod), give the commit
+            // that was already verified in dev, and the target component/project.
+            stage('validate-commit-status') {
+                when {
+                    expression { params.ENVIRONMENT in ['sit', 'uat', 'prod'] }
+                }
+                steps {
+                    script {
+                        if (!params.COMMIT_ID?.trim()) {
+                            error("COMMIT_ID is required when deploying to ${params.ENVIRONMENT}")
+                        }
+                        shortCommit = params.COMMIT_ID.trim().take(7)
+                        utils.validateCommitStatus(params.COMMIT_ID.trim(), ['dev-deploy', 'api-tests'])
+                    }
+                }
+            }
+            stage('sit-deploy') {
+                when {
+                    expression { params.ENVIRONMENT == 'sit' }
+                }
+                steps {
+                    script {
+                        try {
+                            withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                                sh """
+                                    aws eks update-kubeconfig --name roboshop-sit --region us-east-1
+
+                                    helm upgrade --install ${params.COMPONENT} ./helm \
+                                        -f ./helm/values-sit.yaml \
+                                        --namespace roboshop-sit \
+                                        --create-namespace \
+                                        --set deployment.imageVersion=${shortCommit} \
+                                        --wait --timeout 5m
+
+                                    kubectl rollout status deployment/${params.COMPONENT} -n roboshop-sit --timeout=120s
+                                """
+                            }
+                            utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-sit", 'sit-deploy')
+                        }
+                        catch (Exception e) {
+                            utils.updateCommitStatus('failure', 'Deploy to roboshop-sit failed', 'sit-deploy')
+                            throw e
+                        }
+                    }
+                }
+            }
+            stage('uat-deploy') {
+                when {
+                    expression { params.ENVIRONMENT == 'uat' }
+                }
+                steps {
+                    echo "UAT deploy — not implemented yet"
+                }
+            }
+            stage('prod-deploy') {
+                when {
+                    expression { params.ENVIRONMENT == 'prod' }
+                }
+                steps {
+                    echo "PROD deploy — not implemented yet"
+                }
+            }
         }
 
         post {
@@ -80,7 +188,7 @@ def call (Map configMap){
                     channel: '#test-ci',
                     color: 'good',
                     tokenCredentialId: 'slack-token',
-                    message: "✅ *${component}* main dev-deploy & api-tests succeeded — commit `${env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
+                    message: "✅ *${params.COMPONENT ?: component}* ${params.ENVIRONMENT} deploy succeeded — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
                 )
             }
             failure {
@@ -88,7 +196,7 @@ def call (Map configMap){
                     channel: '#test-ci',
                     color: 'danger',
                     tokenCredentialId: 'slack-token',
-                    message: "❌ *${component}* main dev-deploy & api-tests failed — commit `${env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
+                    message: "❌ *${params.COMPONENT ?: component}* ${params.ENVIRONMENT} deploy failed — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
                 )
             }
         }
