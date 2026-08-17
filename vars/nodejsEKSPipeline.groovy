@@ -129,13 +129,22 @@ def call (Map configMap){
                 steps {
                     script {
                         // in this block we get aws authentication
-                        withAWS(credentials: 'aws-creds', region: 'us-east-1') {
-                            sh """
-                                aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${acc_id}.dkr.ecr.us-east-1.amazonaws.com
-                                docker build -t ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion} .
-                                docker push ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion}
-                            """
+                        try {
+                            withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                                sh """
+                                    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${acc_id}.dkr.ecr.us-east-1.amazonaws.com
+                                    docker build -t ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion} .
+                                    
+                                    docker push ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion}
+                                """
+                            }
+                            utils.updateCommitStatus('success', 'Docker image build', 'build-image')
                         }
+                        catch (Exception e) {
+                            utils.updateCommitStatus('failure', 'Docker image faied', 'build-image')
+                            throw e
+                        }
+                        
                     }
                 }
             }
@@ -158,8 +167,10 @@ def call (Map configMap){
                         archiveArtifacts artifacts: 'trivy-*.txt', allowEmptyArchive: true
 
                         if (osScan != 0 || dockerfileScan != 0) {
+                            utils.updateCommitStatus('failure', 'trivy scan failed', 'trivy-scan')
                             error("Trivy found HIGH/CRITICAL issues — OS scan exit: ${osScan}, Dockerfile scan exit: ${dockerfileScan}")
                         }
+                        utils.updateCommitStatus('success', 'trivy scan success', 'trivy-scan')
                     }
                 }
             }
