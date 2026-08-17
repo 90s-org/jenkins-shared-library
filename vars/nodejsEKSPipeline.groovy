@@ -134,8 +134,6 @@ def call (Map configMap){
                                 sh """
                                     aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${acc_id}.dkr.ecr.us-east-1.amazonaws.com
                                     docker build -t ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion} .
-                                    
-                                    docker push ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion}
                                 """
                             }
                             utils.updateCommitStatus('success', 'Docker image build', 'build-image')
@@ -171,6 +169,21 @@ def call (Map configMap){
                             error("Trivy found HIGH/CRITICAL issues — OS scan exit: ${osScan}, Dockerfile scan exit: ${dockerfileScan}")
                         }
                         utils.updateCommitStatus('success', 'trivy scan success', 'trivy-scan')
+                    }
+                }
+            }
+            stage('push-image-to-ecr'){
+                steps{
+                    script{
+                        try {
+                            withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                                docker push ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion}
+                                utils.updateCommitStatus('success', 'push image to ECR', 'push-image')
+                            }
+                        }
+                        catch(Exception e){
+                            utils.updateCommitStatus('failure', 'push image to ECR', 'push-image')
+                        }
                     }
                 }
             }
