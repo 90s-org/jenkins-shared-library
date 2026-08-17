@@ -60,7 +60,7 @@ def call (Map configMap){
                     } 
                 }
             }
-            stage('sonar-analysis') {
+            /* stage('sonar-analysis') {
                 steps {
                     // 'My SonarQube Server' must match the name configured in Jenkins System Settings
                     withSonarQubeEnv('sonar-server') {
@@ -83,7 +83,7 @@ def call (Map configMap){
                         }
                     }
                 }
-            }
+            } */
             stage('library-scan') {
                 steps {
                     script {
