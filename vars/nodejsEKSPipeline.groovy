@@ -234,17 +234,41 @@ def call (Map configMap){
                     }
                 }
             }
+            stage('raise-pr') {
+                when {
+                    not { branch 'main' }
+                }
+                steps {
+                    script {
+                        try {
+                            utils.createPullRequest('main', "${component}: ${env.BRANCH_NAME} -> main", "Automated PR after successful dev-deploy and api-tests.\n\nBuild: ${env.BUILD_URL}")
+                            utils.updateCommitStatus('success', 'PR raised/verified', 'raise-pr')
+                        }
+                        catch (Exception e) {
+                            utils.updateCommitStatus('failure', 'Failed to raise PR', 'raise-pr')
+                            throw e
+                        }
+                    }
+                }
+            }
         }
 
-        post { 
-            always { 
-                echo 'I will always say Hello again!'
+        post {
+            success {
+                slackSend(
+                    channel: '#roboshop-ci',
+                    color: 'good',
+                    tokenCredentialId: 'slack-token',
+                    message: "✅ *${component}* pipeline succeeded — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}|open>)"
+                )
             }
-            success { 
-                echo 'I will run when success'
-            }
-            failure { 
-                echo 'I will Run when it is failed'
+            failure {
+                slackSend(
+                    channel: '#roboshop-ci',
+                    color: 'danger',
+                    tokenCredentialId: 'slack-token',
+                    message: "❌ *${component}* pipeline failed — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}|open>)"
+                )
             }
         }
     }

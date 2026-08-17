@@ -32,3 +32,53 @@ def updateCommitStatus(String state, String description, String context = 'Jenki
         }
     }
 }
+
+def createPullRequest(String base = 'main', String title = '', String body = '') {
+    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+        def repoUrl = sh(script: 'git remote get-url origin', returnStdout: true).trim()
+        def repoPath = repoUrl.replaceAll(/.*github\.com[\/:]/, '').replaceAll(/\.git$/, '')
+        def head = env.BRANCH_NAME
+
+        withEnv([
+            "REPO_PATH=${repoPath}",
+            "PR_BASE=${base}",
+            "PR_HEAD=${head}",
+            "PR_TITLE=${title ?: "${head} -> ${base}"}",
+            "PR_BODY=${body ?: "Automated PR from Jenkins build ${env.BUILD_URL}"}"
+        ]) {
+            sh '''
+                set -e
+
+                ORG="${REPO_PATH%%/*}"
+
+                EXISTING=$(curl -sf \
+                    -H "Authorization: Bearer $GITHUB_TOKEN" \
+                    -H "Accept: application/vnd.github+json" \
+                    "https://api.github.com/repos/$REPO_PATH/pulls?head=${ORG}:${PR_HEAD}&base=${PR_BASE}&state=open")
+
+                COUNT=$(echo "$EXISTING" | jq 'length')
+
+                if [ "$COUNT" -gt 0 ]; then
+                    URL=$(echo "$EXISTING" | jq -r '.[0].html_url')
+                    echo "PR already open: $URL"
+                else
+                    RESPONSE=$(jq -n \
+                        --arg title "$PR_TITLE" \
+                        --arg head  "$PR_HEAD" \
+                        --arg base  "$PR_BASE" \
+                        --arg body  "$PR_BODY" \
+                        '{title: $title, head: $head, base: $base, body: $body}' \
+                    | curl -sf \
+                           -X POST \
+                           -H "Authorization: Bearer $GITHUB_TOKEN" \
+                           -H "Accept: application/vnd.github+json" \
+                           -H "Content-Type: application/json" \
+                           --data @- \
+                           "https://api.github.com/repos/$REPO_PATH/pulls")
+                    URL=$(echo "$RESPONSE" | jq -r '.html_url')
+                    echo "Opened PR: $URL"
+                fi
+            '''
+        }
+    }
+}
