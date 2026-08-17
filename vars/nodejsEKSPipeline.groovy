@@ -25,7 +25,7 @@ def call (Map configMap){
         } */
         // Build
         stages {
-            stage('Read version'){
+            stage('read-version'){
                 steps{
                     script {
                         def packageJson = readJSON file: 'package.json'
@@ -35,7 +35,7 @@ def call (Map configMap){
                     }
                 }
             }
-            stage('Install Dependencies') {
+            stage('install-dependencies') {
                 steps {
                     script {
                         sh """
@@ -45,7 +45,7 @@ def call (Map configMap){
                 }
             }
             // this command gives us coverage report and test cases report, sonarqube access this to check quality gate
-            stage('Unit tests') {
+            stage('unit-tests') {
                 steps {
                     script {
                         try {
@@ -60,7 +60,7 @@ def call (Map configMap){
                     } 
                 }
             }
-            /* stage('SonarQube Analysis') {
+            stage('sonar-analysis') {
                 steps {
                     // 'My SonarQube Server' must match the name configured in Jenkins System Settings
                     withSonarQubeEnv('sonar-server') {
@@ -68,7 +68,7 @@ def call (Map configMap){
                     }
                 }
             }
-            stage('SonarQube Quality Gate') {
+            stage('sonar-scan') {
                 steps {
                     timeout(time: 10, unit: 'MINUTES') {
                         script {
@@ -79,8 +79,8 @@ def call (Map configMap){
                         }
                     }
                 }
-            } */
-            stage('Check Dependabot Alerts') {
+            }
+            stage('library-scan') {
                 steps {
                     script {
                         try{
@@ -121,7 +121,7 @@ def call (Map configMap){
                     }
                 }
             }
-            stage('Docker Build') {
+            stage('build-image') {
                 steps {
                     script {
                         // in this block we get aws authentication
@@ -135,7 +135,7 @@ def call (Map configMap){
                     }
                 }
             }
-            stage('Trivy OS + Dockerfile Scan') {
+            stage('trivy-scan') {
                 steps {
                     script {
                         def osScan = sh(script: """
