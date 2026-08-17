@@ -14,21 +14,30 @@ def updateCommitStatus(String state, String description, String context = 'Jenki
             "BUILD_LINK=${env.BUILD_URL}"
         ]) {
             sh '''
-                jq -n \
+                HTTP_STATUS=$(jq -n \
                     --arg state   "$COMMIT_STATE" \
                     --arg url     "$BUILD_LINK" \
                     --arg desc    "$COMMIT_DESC" \
                     --arg context "$COMMIT_CONTEXT" \
                     '{state: $state, target_url: $url, description: $desc, context: $context}' \
-                | curl -sf \
-                       -o /dev/null \
+                | curl -s \
+                       -o commit-status-response.json \
+                       -w "%{http_code}" \
                        -X POST \
                        -H "Authorization: Bearer $GITHUB_TOKEN" \
                        -H "Accept: application/vnd.github+json" \
                        -H "Content-Type: application/json" \
                        -H "X-GitHub-Api-Version: 2022-11-28" \
                        --data @- \
-                       "https://api.github.com/repos/$REPO_PATH/statuses/$COMMIT_SHA"
+                       "https://api.github.com/repos/$REPO_PATH/statuses/$COMMIT_SHA")
+
+                if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+                    echo "GitHub commit status update failed (HTTP $HTTP_STATUS) for context '$COMMIT_CONTEXT':"
+                    cat commit-status-response.json
+                    rm -f commit-status-response.json
+                    exit 1
+                fi
+                rm -f commit-status-response.json
             '''
         }
     }
