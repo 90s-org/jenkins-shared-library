@@ -190,24 +190,30 @@ def call (Map configMap){
                     }
                 }
             }
-            stage('Deploy') {
-                when {
-                    // Evaluates the boolean parameter directly
-                    expression { "${params.DEPLOY}" == "true" }
-                }
-                /* input {
-                    message "Should we continue?"
-                    ok "Yes, we should."
-                    submitter "alice,bob"
-                    parameters {
-                        string(name: 'PERSON', defaultValue: 'Mr Jenkins', description: 'Who should I say hello to?')
-                    }
-                } */
+            stage('dev-deploy') {
                 steps {
                     script {
-                        sh """
-                            echo "Deploying"
-                        """
+                        try {
+                            withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                                sh """
+                                    aws eks update-kubeconfig --name roboshop-dev --region us-east-1
+
+                                    helm upgrade --install ${component} ./helm \
+                                        -f ./helm/values-dev.yaml \
+                                        --namespace roboshop-dev \
+                                        --create-namespace \
+                                        --set deployment.imageVersion=${appVersion} \
+                                        --wait --timeout 5m
+
+                                    kubectl rollout status deployment/${component} -n roboshop-dev --timeout=120s
+                                """
+                            }
+                            utils.updateCommitStatus('success', 'Deployed to roboshop-dev', 'dev-deploy')
+                        }
+                        catch (Exception e) {
+                            utils.updateCommitStatus('failure', 'Deploy to roboshop-dev failed', 'dev-deploy')
+                            throw e
+                        }
                     }
                 }
             }
