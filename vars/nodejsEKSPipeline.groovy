@@ -39,7 +39,7 @@ def call (Map configMap){
                 steps {
                     script {
                         sh """
-                            npm install --no-audit --no-fund --loglevel=error
+                            npm install
                         """
                     } 
                 }
