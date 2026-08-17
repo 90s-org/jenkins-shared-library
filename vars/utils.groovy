@@ -21,6 +21,7 @@ def updateCommitStatus(String state, String description, String context = 'Jenki
                     --arg context "$COMMIT_CONTEXT" \
                     '{state: $state, target_url: $url, description: $desc, context: $context}' \
                 | curl -sf \
+                       -o /dev/null \
                        -X POST \
                        -H "Authorization: Bearer $GITHUB_TOKEN" \
                        -H "Accept: application/vnd.github+json" \

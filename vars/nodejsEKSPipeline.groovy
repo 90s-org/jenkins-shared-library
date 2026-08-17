@@ -39,7 +39,7 @@ def call (Map configMap){
                 steps {
                     script {
                         sh """
-                            npm install
+                            npm install --no-audit --no-fund --loglevel=error
                         """
                     } 
                 }
@@ -241,7 +241,7 @@ def call (Map configMap){
                 steps {
                     script {
                         try {
-                            utils.createPullRequest('main', "${component}: ${env.BRANCH_NAME} -> main", "Automated PR after successful dev-deploy and api-tests.\n\nBuild: ${env.BUILD_URL}")
+                            utils.createPullRequest('main', "${component}: ${env.BRANCH_NAME} -> main", "Automated PR after successful dev-deploy and api-tests.\n\nBuild: ${env.BUILD_URL}console")
                             utils.updateCommitStatus('success', 'PR raised/verified', 'raise-pr')
                         }
                         catch (Exception e) {
@@ -259,7 +259,7 @@ def call (Map configMap){
                     channel: '#test-ci',
                     color: 'good',
                     tokenCredentialId: 'slack-token',
-                    message: "✅ *${component}* pipeline succeeded — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}|open>)"
+                    message: "✅ *${component}* pipeline succeeded — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}console|console>)"
                 )
             }
             failure {
@@ -267,7 +267,7 @@ def call (Map configMap){
                     channel: '#test-ci',
                     color: 'danger',
                     tokenCredentialId: 'slack-token',
-                    message: "❌ *${component}* pipeline failed — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}|open>)"
+                    message: "❌ *${component}* pipeline failed — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}console|console>)"
                 )
             }
         }
