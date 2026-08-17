@@ -177,8 +177,10 @@ def call (Map configMap){
                     script{
                         try {
                             withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                                sh """
                                 docker push ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion}
                                 utils.updateCommitStatus('success', 'push image to ECR', 'push-image')
+                                """
                             }
                         }
                         catch(Exception e){
