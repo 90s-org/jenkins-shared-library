@@ -120,6 +120,8 @@ def call (Map configMap){
             }
             // Manual promotion path: pick ENVIRONMENT (sit/uat/prod), give the commit
             // that was already verified in dev, and the target component/project.
+            // Each stage further down the chain (sit-deploy, sit-integration-tests, ...)
+            // gates the next environment, so the required contexts grow with the target.
             stage('validate-commit-status') {
                 when {
                     expression { params.ENVIRONMENT in ['sit', 'uat', 'prod'] }
@@ -130,7 +132,12 @@ def call (Map configMap){
                             error("COMMIT_ID is required when deploying to ${params.ENVIRONMENT}")
                         }
                         shortCommit = params.COMMIT_ID.trim().take(7)
-                        utils.validateCommitStatus(params.COMMIT_ID.trim(), ['dev-deploy', 'api-tests'])
+
+                        def requiredContexts = ['dev-deploy', 'api-tests']
+                        if (params.ENVIRONMENT in ['uat', 'prod']) {
+                            requiredContexts += ['sit-deploy', 'sit-integration-tests']
+                        }
+                        utils.validateCommitStatus(params.COMMIT_ID.trim(), requiredContexts)
                     }
                 }
             }
@@ -206,7 +213,29 @@ def call (Map configMap){
                     expression { params.ENVIRONMENT == 'uat' }
                 }
                 steps {
-                    echo "UAT deploy — not implemented yet"
+                    script {
+                        try {
+                            withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                                sh """
+                                    aws eks update-kubeconfig --name roboshop --region us-east-1
+
+                                    helm upgrade --install ${params.COMPONENT} ./helm \
+                                        -f ./helm/values-uat.yaml \
+                                        --namespace roboshop-uat \
+                                        --create-namespace \
+                                        --set deployment.imageVersion=${shortCommit} \
+                                        --wait --timeout 5m
+
+                                    kubectl rollout status deployment/${params.COMPONENT} -n roboshop-uat --timeout=120s
+                                """
+                            }
+                            utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-uat", 'uat-deploy')
+                        }
+                        catch (Exception e) {
+                            utils.updateCommitStatus('failure', 'Deploy to roboshop-uat failed', 'uat-deploy')
+                            throw e
+                        }
+                    }
                 }
             }
             stage('prod-deploy') {
