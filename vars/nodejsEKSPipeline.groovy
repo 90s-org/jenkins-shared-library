@@ -200,7 +200,7 @@ def call (Map configMap){
 
                                     helm upgrade --install ${component} ./helm \
                                         -f ./helm/values-dev.yaml \
-                                        --namespace roboshop \
+                                        --namespace roboshop-dev \
                                         --create-namespace \
                                         --set deployment.imageVersion=${appVersion} \
                                         --wait --timeout 5m
