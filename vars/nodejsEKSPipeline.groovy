@@ -255,21 +255,21 @@ def call (Map configMap){
 
         post {
             success {
-                /* slackSend(
+                slackSend(
                     channel: '#test-ci',
                     color: 'good',
                     tokenCredentialId: 'slack-token',
                     message: "✅ *${component}* pipeline succeeded — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}console|console>)"
-                ) */
+                )
                 echo "success"
             }
             failure {
-                /* slackSend(
+                slackSend(
                     channel: '#test-ci',
                     color: 'danger',
                     tokenCredentialId: 'slack-token',
                     message: "❌ *${component}* pipeline failed — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}console|console>)"
-                ) */
+                )
                 echo "failed"
             }
         }
