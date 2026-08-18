@@ -205,7 +205,7 @@ def call (Map configMap){
                                         --set deployment.imageVersion=${appVersion} \
                                         --wait --timeout 5m
 
-                                    kubectl rollout status deployment/${component} -n roboshop-dev --timeout=120s
+                                    kubectl rollout status deployment/${component} -n roboshop --timeout=120s
                                 """
                             }
                             utils.updateCommitStatus('success', 'Deployed to roboshop-dev', 'dev-deploy')
