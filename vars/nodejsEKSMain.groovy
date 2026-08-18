@@ -171,10 +171,27 @@ def call (Map configMap){
                 steps {
                     script {
                         try {
-                            build job: 'ROBOSHOP/roboshop-integration-tests', parameters: [
-                                string(name: 'NAMESPACE', value: 'roboshop-sit'),
-                                string(name: 'COMMIT_ID', value: params.COMMIT_ID.trim())
-                            ], wait: true, propagate: true
+                            withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                                sh "aws eks update-kubeconfig --name roboshop --region us-east-1"
+
+                                // The Jenkins agent can't resolve *.svc.cluster.local from
+                                // roboshop-sit, but it's in the same VPC as the EKS pods —
+                                // route by pod IP instead of relying on cluster DNS.
+                                def catalogueIp = utils.getPodIP('roboshop-sit', 'catalogue')
+                                def cartIp      = utils.getPodIP('roboshop-sit', 'cart')
+                                def userIp      = utils.getPodIP('roboshop-sit', 'user')
+                                def shippingIp  = utils.getPodIP('roboshop-sit', 'shipping')
+                                def paymentIp   = utils.getPodIP('roboshop-sit', 'payment')
+
+                                build job: 'ROBOSHOP/roboshop-integration-tests', parameters: [
+                                    string(name: 'NAMESPACE', value: 'roboshop-sit'),
+                                    string(name: 'CATALOGUE_URL', value: "http://${catalogueIp}:8080"),
+                                    string(name: 'CART_URL', value: "http://${cartIp}:8080"),
+                                    string(name: 'USER_URL', value: "http://${userIp}:8080"),
+                                    string(name: 'SHIPPING_URL', value: "http://${shippingIp}:8080"),
+                                    string(name: 'PAYMENT_URL', value: "http://${paymentIp}:8080")
+                                ], wait: true, propagate: true
+                            }
                             utils.updateCommitStatus('success', 'roboshop-integration-tests passed', 'sit-integration-tests')
                         }
                         catch (Exception e) {

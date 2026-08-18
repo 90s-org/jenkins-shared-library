@@ -83,6 +83,20 @@ def validateCommitStatus(String commitSha, List requiredContexts) {
     }
 }
 
+// Jenkins agent doesn't resolve *.svc.cluster.local (it's not using the cluster's
+// CoreDNS as its resolver), but it IS in the same VPC as the EKS nodes, and EKS pods
+// get real routable VPC IPs — so route to the pod directly by IP instead of by DNS name.
+def getPodIP(String namespace, String component) {
+    def ip = sh(
+        script: "kubectl get pod -n ${namespace} -l component=${component} -o jsonpath='{.items[0].status.podIP}'",
+        returnStdout: true
+    ).trim()
+    if (!ip) {
+        error("Could not resolve a pod IP for component '${component}' in namespace '${namespace}' — is it deployed and running?")
+    }
+    return ip
+}
+
 def createPullRequest(String base = 'main', String title = '', String body = '') {
     withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
         def repoUrl = sh(script: 'git remote get-url origin', returnStdout: true).trim()
