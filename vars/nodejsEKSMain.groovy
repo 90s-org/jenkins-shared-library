@@ -143,7 +143,7 @@ def call (Map configMap){
                         try {
                             withAWS(credentials: 'aws-creds', region: 'us-east-1') {
                                 sh """
-                                    aws eks update-kubeconfig --name roboshop-dev --region us-east-1
+                                    aws eks update-kubeconfig --name roboshop-sit --region us-east-1
 
                                     helm upgrade --install ${params.COMPONENT} ./helm \
                                         -f ./helm/values-sit.yaml \
@@ -159,6 +159,26 @@ def call (Map configMap){
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Deploy to roboshop-sit failed', 'sit-deploy')
+                            throw e
+                        }
+                    }
+                }
+            }
+            stage('sit-integration-tests') {
+                when {
+                    expression { params.ENVIRONMENT == 'sit' }
+                }
+                steps {
+                    script {
+                        try {
+                            build job: 'ROBOSHOP/roboshop-integration-tests', parameters: [
+                                string(name: 'NAMESPACE', value: 'roboshop-sit'),
+                                string(name: 'COMMIT_ID', value: params.COMMIT_ID.trim())
+                            ], wait: true, propagate: true
+                            utils.updateCommitStatus('success', 'roboshop-integration-tests passed', 'sit-integration-tests')
+                        }
+                        catch (Exception e) {
+                            utils.updateCommitStatus('failure', 'roboshop-integration-tests failed', 'sit-integration-tests')
                             throw e
                         }
                     }

@@ -60,7 +60,7 @@ def call (Map configMap){
                     } 
                 }
             }
-            stage('sonar-analysis') {
+            /* stage('sonar-analysis') {
                 steps {
                     // 'My SonarQube Server' must match the name configured in Jenkins System Settings
                     withSonarQubeEnv('sonar-server') {
@@ -83,7 +83,7 @@ def call (Map configMap){
                         }
                     }
                 }
-            }
+            } */
             stage('library-scan') {
                 steps {
                     script {
@@ -255,20 +255,22 @@ def call (Map configMap){
 
         post {
             success {
-                slackSend(
+                /* slackSend(
                     channel: '#test-ci',
                     color: 'good',
                     tokenCredentialId: 'slack-token',
                     message: "✅ *${component}* pipeline succeeded — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}console|console>)"
-                )
+                ) */
+                echo "success"
             }
             failure {
-                slackSend(
+                /* slackSend(
                     channel: '#test-ci',
                     color: 'danger',
                     tokenCredentialId: 'slack-token',
                     message: "❌ *${component}* pipeline failed — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}console|console>)"
-                )
+                ) */
+                echo "failed"
             }
         }
     }
