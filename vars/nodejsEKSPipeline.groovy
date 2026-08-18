@@ -205,7 +205,7 @@ def call (Map configMap){
                                         --set deployment.imageVersion=${appVersion} \
                                         --wait --timeout 5m
 
-                                    kubectl rollout status deployment/${component} -n roboshop --timeout=120s
+                                    kubectl rollout status deployment/${component} -n roboshop-dev --timeout=120s
                                 """
                             }
                             utils.updateCommitStatus('success', 'Deployed to roboshop-dev', 'dev-deploy')
@@ -256,7 +256,7 @@ def call (Map configMap){
         post {
             success {
                 slackSend(
-                    channel: '#test-ci',
+                    channel: '#test-cii',
                     color: 'good',
                     tokenCredentialId: 'slack-token',
                     message: "✅ *${component}* pipeline succeeded — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}console|console>)"
@@ -265,7 +265,7 @@ def call (Map configMap){
             }
             failure {
                 slackSend(
-                    channel: '#test-ci',
+                    channel: '#test-cii',
                     color: 'danger',
                     tokenCredentialId: 'slack-token',
                     message: "❌ *${component}* pipeline failed — build #${env.BUILD_NUMBER} (<${env.BUILD_URL}console|console>)"
