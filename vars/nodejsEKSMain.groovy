@@ -143,7 +143,7 @@ def call (Map configMap){
                         try {
                             withAWS(credentials: 'aws-creds', region: 'us-east-1') {
                                 sh """
-                                    aws eks update-kubeconfig --name roboshop-sit --region us-east-1
+                                    aws eks update-kubeconfig --name roboshop --region us-east-1
 
                                     helm upgrade --install ${params.COMPONENT} ./helm \
                                         -f ./helm/values-sit.yaml \
