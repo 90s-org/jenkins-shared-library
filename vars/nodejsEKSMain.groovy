@@ -238,6 +238,43 @@ def call (Map configMap){
                     }
                 }
             }
+            stage('uat-regression-tests') {
+                when {
+                    expression { params.ENVIRONMENT == 'uat' }
+                }
+                steps {
+                    script {
+                        try {
+                            withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                                sh "aws eks update-kubeconfig --name roboshop --region us-east-1"
+
+                                // The Jenkins agent can't resolve *.svc.cluster.local from
+                                // roboshop-sit, but it's in the same VPC as the EKS pods —
+                                // route by pod IP instead of relying on cluster DNS.
+                                def catalogueIp = utils.getPodIP('roboshop-uat', 'catalogue')
+                                def cartIp      = utils.getPodIP('roboshop-uat', 'cart')
+                                def userIp      = utils.getPodIP('roboshop-uat', 'user')
+                                def shippingIp  = utils.getPodIP('roboshop-uat', 'shipping')
+                                def paymentIp   = utils.getPodIP('roboshop-uat', 'payment')
+
+                                build job: 'ROBOSHOP/roboshop-regression-tests', parameters: [
+                                    string(name: 'NAMESPACE', value: 'roboshop-uat'),
+                                    string(name: 'CATALOGUE_URL', value: "http://${catalogueIp}:8080"),
+                                    string(name: 'CART_URL', value: "http://${cartIp}:8080"),
+                                    string(name: 'USER_URL', value: "http://${userIp}:8080"),
+                                    string(name: 'SHIPPING_URL', value: "http://${shippingIp}:8080"),
+                                    string(name: 'PAYMENT_URL', value: "http://${paymentIp}:8080")
+                                ], wait: true, propagate: true
+                            }
+                            utils.updateCommitStatus('success', 'roboshop-regression-tests passed', 'uat-regression-tests')
+                        }
+                        catch (Exception e) {
+                            utils.updateCommitStatus('failure', 'roboshop-regression-tests failed', 'uat-regression-tests')
+                            throw e
+                        }
+                    }
+                }
+            }
             stage('prod-deploy') {
                 when {
                     expression { params.ENVIRONMENT == 'prod' }
