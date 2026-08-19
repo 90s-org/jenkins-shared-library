@@ -14,14 +14,18 @@ def call (Map configMap){
             string(name: 'PROJECT', defaultValue: 'roboshop', description: 'Project name')
             string(name: 'CR_NUMBER', defaultValue: '', description: 'Change Request number (required for prod deploy)')
             string(name: 'VERSION', defaultValue: '', description: 'Release version to tag the commit with on a successful prod deploy, e.g. v1.4.0 (required for prod deploy)')
+            string(name: 'ISSUE_KEY', defaultValue: '', description: 'Jira ticket key this build should update (set automatically by the dev pipeline when it creates the ticket; leave blank for manual promotions with no Jira tracking)')
         }
         environment {
             def appVersion = ""
             def shortCommit = ""
+            def issueKey = ""
             acc_id = "160885265516"
             project = configMap.get("project")
             component = configMap.get("component")
             org = "90s-org"
+            JIRA_SITE = "roboshop-jira"
+            jiraProjectKey = "D88S"
         }
         options {
             disableConcurrentBuilds()
@@ -92,8 +96,23 @@ def call (Map configMap){
                     }
                 }
             }
-            // Dev-deploy and api-tests passed against this merge commit — promote the
-            // same image by retagging it with the short commit SHA in ECR.
+            // Dev-deploy and api-tests passed against this commit — open the Jira ticket
+            // that tracks it through SIT/UAT/PROD, carrying the commit and version so
+            // nobody has to type them in by hand later.
+            stage('create-jira-ticket') {
+                when {
+                    expression { params.ENVIRONMENT == 'dev' }
+                }
+                steps {
+                    script {
+                        shortCommit = env.GIT_COMMIT.take(7)
+                        issueKey = utils.createJiraTicket(jiraProjectKey, shortCommit, appVersion)
+                        echo "Created Jira ticket ${issueKey} for ${shortCommit} / ${appVersion}"
+                    }
+                }
+            }
+            // Promote the same image that just passed dev/api-tests by retagging it
+            // with the short commit SHA in ECR.
             stage('promote-image') {
                 when {
                     expression { params.ENVIRONMENT == 'dev' }
@@ -101,7 +120,6 @@ def call (Map configMap){
                 steps {
                     script {
                         try {
-                            shortCommit = env.GIT_COMMIT.take(7)
                             withAWS(credentials: 'aws-creds', region: 'us-east-1') {
                                 sh """
                                     aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${acc_id}.dkr.ecr.us-east-1.amazonaws.com
@@ -117,6 +135,28 @@ def call (Map configMap){
                             utils.updateCommitStatus('failure', 'Image promotion failed', 'promote-image')
                             throw e
                         }
+                    }
+                }
+            }
+            // Image is promoted — kick SIT off immediately, no manual click needed.
+            // UAT/PROD stay manual (a human clicks Trigger UAT / Trigger PROD in
+            // Jira, which fires the equivalent build via a Jira Automation rule).
+            stage('trigger-sit-deploy') {
+                when {
+                    expression { params.ENVIRONMENT == 'dev' }
+                }
+                steps {
+                    script {
+                        if (issueKey?.trim()) {
+                            utils.transitionJiraIssue(issueKey, 'SIT In Progress')
+                        }
+                        build job: env.JOB_NAME, parameters: [
+                            string(name: 'ENVIRONMENT', value: 'sit'),
+                            string(name: 'COMMIT_ID', value: env.GIT_COMMIT),
+                            string(name: 'COMPONENT', value: component),
+                            string(name: 'PROJECT', value: project),
+                            string(name: 'ISSUE_KEY', value: issueKey)
+                        ], wait: false
                     }
                 }
             }
@@ -171,6 +211,9 @@ def call (Map configMap){
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Deploy to roboshop-sit failed', 'sit-deploy')
+                            if (params.ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger SIT')
+                            }
                             throw e
                         }
                     }
@@ -205,9 +248,15 @@ def call (Map configMap){
                                 ], wait: true, propagate: true
                             }
                             utils.updateCommitStatus('success', 'roboshop-integration-tests passed', 'sit-integration-tests')
+                            if (params.ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'SIT Done')
+                            }
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'roboshop-integration-tests failed', 'sit-integration-tests')
+                            if (params.ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger SIT')
+                            }
                             throw e
                         }
                     }
@@ -238,6 +287,9 @@ def call (Map configMap){
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Deploy to roboshop-uat failed', 'uat-deploy')
+                            if (params.ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger UAT')
+                            }
                             throw e
                         }
                     }
@@ -272,9 +324,15 @@ def call (Map configMap){
                                 ], wait: true, propagate: true
                             }
                             utils.updateCommitStatus('success', 'roboshop-regression-tests passed', 'uat-regression-tests')
+                            if (params.ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'UAT Done')
+                            }
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'roboshop-regression-tests failed', 'uat-regression-tests')
+                            if (params.ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger UAT')
+                            }
                             throw e
                         }
                     }
@@ -349,6 +407,9 @@ def call (Map configMap){
                                     echo "prod-deploy failed on the first-ever release of ${params.COMPONENT} — nothing to roll back to"
                                 }
                                 utils.updateCommitStatus('failure', 'Deploy to roboshop-prod failed', 'prod-deploy')
+                                if (params.ISSUE_KEY?.trim()) {
+                                    utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger PROD')
+                                }
                                 throw e
                             }
                         }
@@ -365,6 +426,9 @@ def call (Map configMap){
                     script {
                         utils.tagCommit(params.COMMIT_ID.trim(), params.VERSION.trim())
                         echo "Tagged ${shortCommit} as ${params.VERSION} (CR ${params.CR_NUMBER})"
+                        if (params.ISSUE_KEY?.trim()) {
+                            utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Completed')
+                        }
                     }
                 }
             }

@@ -134,6 +134,55 @@ def tagCommit(String commitSha, String tag) {
     }
 }
 
+// Uses the JIRA Pipeline Steps plugin (jira-steps-plugin) rather than raw REST
+// calls — the Jira site (URL + auth) is configured once under Manage Jenkins ->
+// Configure System -> JIRA Steps, and referenced here via the JIRA_SITE env var
+// each pipeline sets, so these calls don't need a site name passed explicitly.
+def createJiraTicket(String projectKey, String commitId, String version) {
+    def fields = jiraGetFields()
+    if (!fields.successful) {
+        error("Could not fetch Jira fields: ${fields.error}")
+    }
+    def commitFieldId = fields.data.find { it.name == 'Commit ID' }?.id
+    def versionFieldId = fields.data.find { it.name == 'Version' }?.id
+    if (!commitFieldId || !versionFieldId) {
+        error("Could not find the 'Commit ID' / 'Version' custom fields on this Jira site")
+    }
+
+    def issueFields = [
+        project  : [key: projectKey],
+        issuetype: [name: 'Task'],
+        summary  : "Release ${version} - ${commitId}"
+    ]
+    issueFields[commitFieldId] = commitId
+    issueFields[versionFieldId] = version
+
+    def result = jiraNewIssue(issue: [fields: issueFields])
+    if (!result.successful) {
+        error("Failed to create Jira ticket: ${result.error}")
+    }
+    return result.data.key
+}
+
+// Matches by the target status's name rather than the transition's own label,
+// since transition labels drawn in the workflow diagram aren't guaranteed to
+// be set to anything meaningful.
+def transitionJiraIssue(String issueKey, String targetStatus) {
+    def transitions = jiraGetIssueTransitions(idOrKey: issueKey)
+    if (!transitions.successful) {
+        error("Could not fetch transitions for ${issueKey}: ${transitions.error}")
+    }
+    def transitionId = transitions.data.transitions.find { it.to.name == targetStatus }?.id
+    if (!transitionId) {
+        error("No available transition to status '${targetStatus}' for ${issueKey}")
+    }
+
+    def result = jiraTransitionIssue(idOrKey: issueKey, input: [transition: [id: transitionId]])
+    if (!result.successful) {
+        error("Failed to transition ${issueKey} to '${targetStatus}': ${result.error}")
+    }
+}
+
 def createPullRequest(String base = 'main', String title = '', String body = '') {
     withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
         def repoUrl = sh(script: 'git remote get-url origin', returnStdout: true).trim()
