@@ -48,7 +48,7 @@ def call (Map configMap){
                     [key: 'VERSION', value: '$.VERSION'],
                     [key: 'CR_NUMBER', value: '$.CR_NUMBER']
                 ],
-                tokenCredentialId: 'jira-webhook-token',
+                tokenCredentialId: 'jira-secret',
                 causeString: 'Triggered by Jira Automation',
                 printContributedVariables: true,
                 printPostContent: true
@@ -189,28 +189,11 @@ def call (Map configMap){
                     }
                 }
             }
-            // Image is promoted — kick SIT off immediately, no manual click needed.
-            // UAT/PROD stay manual (a human clicks Trigger UAT / Trigger PROD in
-            // Jira, which fires the equivalent build via a Jira Automation rule).
-            stage('trigger-sit-deploy') {
-                when {
-                    expression { params.ENVIRONMENT == 'dev' }
-                }
-                steps {
-                    script {
-                        if (issueKey?.trim()) {
-                            utils.transitionJiraIssue(issueKey, 'SIT In Progress')
-                        }
-                        build job: env.JOB_NAME, parameters: [
-                            string(name: 'ENVIRONMENT', value: 'sit'),
-                            string(name: 'COMMIT_ID', value: env.GIT_COMMIT),
-                            string(name: 'COMPONENT', value: component),
-                            string(name: 'PROJECT', value: project),
-                            string(name: 'ISSUE_KEY', value: issueKey)
-                        ], wait: false
-                    }
-                }
-            }
+            // Dev's job ends here — the ticket sits at Trigger SIT (its creation
+            // status). SIT/UAT/PROD are all started the same way from here on: a
+            // Jira Automation rule (Issue created for SIT, Issue transitioned for
+            // UAT/PROD) fires the webhook, which relays into a real build via
+            // 'jira-webhook-relay' above.
             // Manual promotion path: pick ENVIRONMENT (sit/uat/prod), give the commit
             // that was already verified in dev, and the target component/project.
             // Each stage further down the chain (sit-deploy, sit-integration-tests, ...)
