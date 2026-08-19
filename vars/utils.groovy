@@ -143,9 +143,10 @@ def createJiraTicket(String projectKey, String commitId, String version) {
     if (!fields.successful) {
         error("Could not fetch Jira fields: ${fields.error}")
     }
-    def commitFieldId = fields.data.find { it.name == 'Commit ID' }?.id
-    def versionFieldId = fields.data.find { it.name == 'Version' }?.id
+    def commitFieldId = fields.data.find { it.name?.trim()?.equalsIgnoreCase('Commit ID') }?.id
+    def versionFieldId = fields.data.find { it.name?.trim()?.equalsIgnoreCase('Version') }?.id
     if (!commitFieldId || !versionFieldId) {
+        echo "Fields returned by jiraGetFields: ${fields.data.collect { "${it.name} (${it.id})" }.join(', ')}"
         error("Could not find the 'Commit ID' / 'Version' custom fields on this Jira site")
     }
 

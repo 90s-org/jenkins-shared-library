@@ -31,7 +31,58 @@ def call (Map configMap){
             disableConcurrentBuilds()
             timeout(time: 15, unit: 'MINUTES')
         }
+        // Branch jobs under this multibranch project have their whole Configure page
+        // locked (computed from the Jenkinsfile scan), so "Trigger builds remotely"
+        // can't be set via the UI at all. Declaring the trigger here instead means it's
+        // regenerated from code on every scan — Jira Automation calls this webhook
+        // directly. The 'jira-webhook-token' credential is a Secret text credential;
+        // its value is whatever gets passed as ?token=... in the webhook URL.
+        triggers {
+            GenericTrigger(
+                genericVariables: [
+                    [key: 'ENVIRONMENT', value: '$.ENVIRONMENT'],
+                    [key: 'COMMIT_ID', value: '$.COMMIT_ID'],
+                    [key: 'COMPONENT', value: '$.COMPONENT'],
+                    [key: 'PROJECT', value: '$.PROJECT'],
+                    [key: 'ISSUE_KEY', value: '$.ISSUE_KEY'],
+                    [key: 'VERSION', value: '$.VERSION'],
+                    [key: 'CR_NUMBER', value: '$.CR_NUMBER']
+                ],
+                tokenCredentialId: 'jira-webhook-token',
+                causeString: 'Triggered by Jira Automation',
+                printContributedVariables: true,
+                printPostContent: true
+            )
+        }
         stages {
+            // GenericTrigger populates env.* from the webhook JSON body, not params.* —
+            // every stage below gates on params.*, so a webhook-triggered run can't do
+            // the real work directly. Instead it just relays into a second, properly
+            // parameterized build of this same job and stops. Manual/internal builds
+            // (no GenericCause) skip straight to the 'pipeline' stage below.
+            stage('jira-webhook-relay') {
+                when {
+                    expression { !currentBuild.getBuildCauses('org.jenkinsci.plugins.gwt.GenericCause').isEmpty() }
+                }
+                steps {
+                    script {
+                        build job: env.JOB_NAME, parameters: [
+                            string(name: 'ENVIRONMENT', value: env.ENVIRONMENT ?: 'dev'),
+                            string(name: 'COMMIT_ID', value: env.COMMIT_ID ?: ''),
+                            string(name: 'COMPONENT', value: env.COMPONENT ?: 'catalogue'),
+                            string(name: 'PROJECT', value: env.PROJECT ?: 'roboshop'),
+                            string(name: 'ISSUE_KEY', value: env.ISSUE_KEY ?: ''),
+                            string(name: 'VERSION', value: env.VERSION ?: ''),
+                            string(name: 'CR_NUMBER', value: env.CR_NUMBER ?: '')
+                        ], wait: false
+                    }
+                }
+            }
+            stage('pipeline') {
+                when {
+                    expression { currentBuild.getBuildCauses('org.jenkinsci.plugins.gwt.GenericCause').isEmpty() }
+                }
+                stages {
             // Re-verify the merged commit in dev: redeploy the image built on the
             // feature branch and re-run api-tests against it before it's considered good.
             stage('read-version'){
@@ -432,6 +483,8 @@ def call (Map configMap){
                     }
                 }
             }
+                } // end nested stages (real pipeline logic)
+            } // end stage('pipeline')
         }
 
         post {
