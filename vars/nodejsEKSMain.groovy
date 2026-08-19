@@ -256,6 +256,7 @@ def call (Map configMap){
                     tokenCredentialId: 'slack-token',
                     message: "✅ *${params.COMPONENT ?: component}* ${params.ENVIRONMENT} deploy succeeded — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
                 ) */
+                echo "success"
             }
             failure {
                 /* slackSend(
@@ -264,6 +265,7 @@ def call (Map configMap){
                     tokenCredentialId: 'slack-token',
                     message: "❌ *${params.COMPONENT ?: component}* ${params.ENVIRONMENT} deploy failed — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
                 ) */
+                echo "failure"
             }
         }
     }
