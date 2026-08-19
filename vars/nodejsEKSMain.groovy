@@ -20,6 +20,17 @@ def call (Map configMap){
             def appVersion = ""
             def shortCommit = ""
             def issueKey = ""
+            // Resolved once in 'resolve-inputs': prefer the Jira webhook's env.* payload
+            // (GenericTrigger only ever populates env.*, never params.*) and fall back to
+            // params.* for manual "Build with Parameters" runs. Every stage below reads
+            // these instead of params.* directly, so one build handles both trigger paths.
+            def env_ENVIRONMENT = ""
+            def env_COMMIT_ID = ""
+            def env_COMPONENT = ""
+            def env_PROJECT = ""
+            def env_ISSUE_KEY = ""
+            def env_VERSION = ""
+            def env_CR_NUMBER = ""
             acc_id = "160885265516"
             project = configMap.get("project")
             component = configMap.get("component")
@@ -35,8 +46,8 @@ def call (Map configMap){
         // locked (computed from the Jenkinsfile scan), so "Trigger builds remotely"
         // can't be set via the UI at all. Declaring the trigger here instead means it's
         // regenerated from code on every scan — Jira Automation calls this webhook
-        // directly. The 'jira-webhook-token' credential is a Secret text credential;
-        // its value is whatever gets passed as ?token=... in the webhook URL.
+        // directly. The 'jira-secret' credential is a Secret text credential; its
+        // value is whatever gets passed as ?token=... in the webhook URL.
         triggers {
             GenericTrigger(
                 genericVariables: [
@@ -55,39 +66,30 @@ def call (Map configMap){
             )
         }
         stages {
-            // GenericTrigger populates env.* from the webhook JSON body, not params.* —
-            // every stage below gates on params.*, so a webhook-triggered run can't do
-            // the real work directly. Instead it just relays into a second, properly
-            // parameterized build of this same job and stops. Manual/internal builds
-            // (no GenericCause) skip straight to the 'pipeline' stage below.
-            stage('jira-webhook-relay') {
-                when {
-                    expression { !currentBuild.getBuildCauses('org.jenkinsci.plugins.gwt.GenericCause').isEmpty() }
-                }
+            // Runs first, always. Resolves the real inputs for this build once, so
+            // every later stage can just read these instead of choosing between
+            // params.* and env.* itself. env.* wins when present (webhook path) —
+            // params.ENVIRONMENT is a choice param and can never actually be blank,
+            // so it can't be used as an "was this a webhook build" signal itself.
+            stage('resolve-inputs') {
                 steps {
                     script {
-                        build job: env.JOB_NAME, parameters: [
-                            string(name: 'ENVIRONMENT', value: env.ENVIRONMENT ?: 'dev'),
-                            string(name: 'COMMIT_ID', value: env.COMMIT_ID ?: ''),
-                            string(name: 'COMPONENT', value: env.COMPONENT ?: 'catalogue'),
-                            string(name: 'PROJECT', value: env.PROJECT ?: 'roboshop'),
-                            string(name: 'ISSUE_KEY', value: env.ISSUE_KEY ?: ''),
-                            string(name: 'VERSION', value: env.VERSION ?: ''),
-                            string(name: 'CR_NUMBER', value: env.CR_NUMBER ?: '')
-                        ], wait: false
+                        env_ENVIRONMENT = env.ENVIRONMENT?.trim() ?: params.ENVIRONMENT
+                        env_COMMIT_ID   = env.COMMIT_ID?.trim() ?: params.COMMIT_ID
+                        env_COMPONENT   = env.COMPONENT?.trim() ?: params.COMPONENT
+                        env_PROJECT     = env.PROJECT?.trim() ?: params.PROJECT
+                        env_ISSUE_KEY   = env.ISSUE_KEY?.trim() ?: params.ISSUE_KEY
+                        env_VERSION     = env.VERSION?.trim() ?: params.VERSION
+                        env_CR_NUMBER   = env.CR_NUMBER?.trim() ?: params.CR_NUMBER
+                        echo "Resolved inputs: ENVIRONMENT=${env_ENVIRONMENT} COMMIT_ID=${env_COMMIT_ID} COMPONENT=${env_COMPONENT} PROJECT=${env_PROJECT} ISSUE_KEY=${env_ISSUE_KEY}"
                     }
                 }
             }
-            stage('pipeline') {
-                when {
-                    expression { currentBuild.getBuildCauses('org.jenkinsci.plugins.gwt.GenericCause').isEmpty() }
-                }
-                stages {
             // Re-verify the merged commit in dev: redeploy the image built on the
             // feature branch and re-run api-tests against it before it's considered good.
             stage('read-version'){
                 when {
-                    expression { params.ENVIRONMENT == 'dev' }
+                    expression { env_ENVIRONMENT == 'dev' }
                 }
                 steps{
                     script {
@@ -99,7 +101,7 @@ def call (Map configMap){
             }
             stage('dev-deploy') {
                 when {
-                    expression { params.ENVIRONMENT == 'dev' }
+                    expression { env_ENVIRONMENT == 'dev' }
                 }
                 steps {
                     script {
@@ -129,7 +131,7 @@ def call (Map configMap){
             }
             stage('api-tests') {
                 when {
-                    expression { params.ENVIRONMENT == 'dev' }
+                    expression { env_ENVIRONMENT == 'dev' }
                 }
                 steps {
                     script {
@@ -149,10 +151,12 @@ def call (Map configMap){
             }
             // Dev-deploy and api-tests passed against this commit — open the Jira ticket
             // that tracks it through SIT/UAT/PROD, carrying the commit and version so
-            // nobody has to type them in by hand later.
+            // nobody has to type them in by hand later. Jenkins does not trigger SIT
+            // itself — the ticket sits at Trigger SIT until Jira's Automation rule
+            // fires the webhook above.
             stage('create-jira-ticket') {
                 when {
-                    expression { params.ENVIRONMENT == 'dev' }
+                    expression { env_ENVIRONMENT == 'dev' }
                 }
                 steps {
                     script {
@@ -166,7 +170,7 @@ def call (Map configMap){
             // with the short commit SHA in ECR.
             stage('promote-image') {
                 when {
-                    expression { params.ENVIRONMENT == 'dev' }
+                    expression { env_ENVIRONMENT == 'dev' }
                 }
                 steps {
                     script {
@@ -189,40 +193,36 @@ def call (Map configMap){
                     }
                 }
             }
-            // Dev's job ends here — the ticket sits at Trigger SIT (its creation
-            // status). SIT/UAT/PROD are all started the same way from here on: a
-            // Jira Automation rule (Issue created for SIT, Issue transitioned for
-            // UAT/PROD) fires the webhook, which relays into a real build via
-            // 'jira-webhook-relay' above.
-            // Manual promotion path: pick ENVIRONMENT (sit/uat/prod), give the commit
-            // that was already verified in dev, and the target component/project.
-            // Each stage further down the chain (sit-deploy, sit-integration-tests, ...)
-            // gates the next environment, so the required contexts grow with the target.
+            // Jira-driven promotion path: SIT/UAT/PROD are all started by a Jira
+            // Automation rule hitting the webhook above, which resolve-inputs already
+            // folded into env_*. Each stage further down the chain (sit-deploy,
+            // sit-integration-tests, ...) gates the next environment, so the required
+            // contexts grow with the target.
             stage('validate-commit-status') {
                 when {
-                    expression { params.ENVIRONMENT in ['sit', 'uat', 'prod'] }
+                    expression { env_ENVIRONMENT in ['sit', 'uat', 'prod'] }
                 }
                 steps {
                     script {
-                        if (!params.COMMIT_ID?.trim()) {
-                            error("COMMIT_ID is required when deploying to ${params.ENVIRONMENT}")
+                        if (!env_COMMIT_ID?.trim()) {
+                            error("COMMIT_ID is required when deploying to ${env_ENVIRONMENT}")
                         }
-                        shortCommit = params.COMMIT_ID.trim().take(7)
+                        shortCommit = env_COMMIT_ID.trim().take(7)
 
                         def requiredContexts = ['dev-deploy', 'api-tests']
-                        if (params.ENVIRONMENT in ['uat', 'prod']) {
+                        if (env_ENVIRONMENT in ['uat', 'prod']) {
                             requiredContexts += ['sit-deploy', 'sit-integration-tests']
                         }
-                        if (params.ENVIRONMENT == 'prod') {
+                        if (env_ENVIRONMENT == 'prod') {
                             requiredContexts += ['uat-deploy', 'uat-regression-tests']
                         }
-                        utils.validateCommitStatus(params.COMMIT_ID.trim(), requiredContexts)
+                        utils.validateCommitStatus(env_COMMIT_ID.trim(), requiredContexts)
                     }
                 }
             }
             stage('sit-deploy') {
                 when {
-                    expression { params.ENVIRONMENT == 'sit' }
+                    expression { env_ENVIRONMENT == 'sit' }
                 }
                 steps {
                     script {
@@ -231,22 +231,22 @@ def call (Map configMap){
                                 sh """
                                     aws eks update-kubeconfig --name roboshop --region us-east-1
 
-                                    helm upgrade --install ${params.COMPONENT} ./helm \
+                                    helm upgrade --install ${env_COMPONENT} ./helm \
                                         -f ./helm/values-sit.yaml \
                                         --namespace roboshop-sit \
                                         --create-namespace \
                                         --set deployment.imageVersion=${shortCommit} \
                                         --wait --timeout 5m
 
-                                    kubectl rollout status deployment/${params.COMPONENT} -n roboshop-sit --timeout=120s
+                                    kubectl rollout status deployment/${env_COMPONENT} -n roboshop-sit --timeout=120s
                                 """
                             }
                             utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-sit", 'sit-deploy')
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Deploy to roboshop-sit failed', 'sit-deploy')
-                            if (params.ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger SIT')
+                            if (env_ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger SIT')
                             }
                             throw e
                         }
@@ -255,7 +255,7 @@ def call (Map configMap){
             }
             stage('sit-integration-tests') {
                 when {
-                    expression { params.ENVIRONMENT == 'sit' }
+                    expression { env_ENVIRONMENT == 'sit' }
                 }
                 steps {
                     script {
@@ -282,14 +282,14 @@ def call (Map configMap){
                                 ], wait: true, propagate: true
                             }
                             utils.updateCommitStatus('success', 'roboshop-integration-tests passed', 'sit-integration-tests')
-                            if (params.ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'SIT Done')
+                            if (env_ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'SIT Done')
                             }
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'roboshop-integration-tests failed', 'sit-integration-tests')
-                            if (params.ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger SIT')
+                            if (env_ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger SIT')
                             }
                             throw e
                         }
@@ -298,7 +298,7 @@ def call (Map configMap){
             }
             stage('uat-deploy') {
                 when {
-                    expression { params.ENVIRONMENT == 'uat' }
+                    expression { env_ENVIRONMENT == 'uat' }
                 }
                 steps {
                     script {
@@ -307,22 +307,22 @@ def call (Map configMap){
                                 sh """
                                     aws eks update-kubeconfig --name roboshop --region us-east-1
 
-                                    helm upgrade --install ${params.COMPONENT} ./helm \
+                                    helm upgrade --install ${env_COMPONENT} ./helm \
                                         -f ./helm/values-uat.yaml \
                                         --namespace roboshop-uat \
                                         --create-namespace \
                                         --set deployment.imageVersion=${shortCommit} \
                                         --wait --timeout 5m
 
-                                    kubectl rollout status deployment/${params.COMPONENT} -n roboshop-uat --timeout=120s
+                                    kubectl rollout status deployment/${env_COMPONENT} -n roboshop-uat --timeout=120s
                                 """
                             }
                             utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-uat", 'uat-deploy')
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Deploy to roboshop-uat failed', 'uat-deploy')
-                            if (params.ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger UAT')
+                            if (env_ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger UAT')
                             }
                             throw e
                         }
@@ -331,7 +331,7 @@ def call (Map configMap){
             }
             stage('uat-regression-tests') {
                 when {
-                    expression { params.ENVIRONMENT == 'uat' }
+                    expression { env_ENVIRONMENT == 'uat' }
                 }
                 steps {
                     script {
@@ -358,14 +358,14 @@ def call (Map configMap){
                                 ], wait: true, propagate: true
                             }
                             utils.updateCommitStatus('success', 'roboshop-regression-tests passed', 'uat-regression-tests')
-                            if (params.ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'UAT Done')
+                            if (env_ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'UAT Done')
                             }
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'roboshop-regression-tests failed', 'uat-regression-tests')
-                            if (params.ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger UAT')
+                            if (env_ISSUE_KEY?.trim()) {
+                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger UAT')
                             }
                             throw e
                         }
@@ -378,17 +378,17 @@ def call (Map configMap){
             // overall 15-minute budget.
             stage('change-request-check') {
                 when {
-                    expression { params.ENVIRONMENT == 'prod' }
+                    expression { env_ENVIRONMENT == 'prod' }
                 }
                 options {
                     timeout(time: 4, unit: 'HOURS')
                 }
                 steps {
                     script {
-                        if (!params.CR_NUMBER?.trim()) {
+                        if (!env_CR_NUMBER?.trim()) {
                             error("CR_NUMBER is required for a prod deploy")
                         }
-                        if (!params.VERSION?.trim()) {
+                        if (!env_VERSION?.trim()) {
                             error("VERSION is required for a prod deploy")
                         }
 
@@ -396,17 +396,17 @@ def call (Map configMap){
                         // up to a real CR system. Blocks weekend prod deploys for now.
                         def dayOfWeek = sh(script: 'date +%u', returnStdout: true).trim().toInteger()
                         if (dayOfWeek >= 6) {
-                            error("CR ${params.CR_NUMBER}: outside the approved deployment window (no weekend prod deploys) — dummy check, replace with a real CR window lookup")
+                            error("CR ${env_CR_NUMBER}: outside the approved deployment window (no weekend prod deploys) — dummy check, replace with a real CR window lookup")
                         }
-                        echo "CR ${params.CR_NUMBER}: within deployment window"
+                        echo "CR ${env_CR_NUMBER}: within deployment window"
 
-                        input message: "Approve prod deploy of ${params.COMPONENT}@${shortCommit} as ${params.VERSION} under CR ${params.CR_NUMBER}?", ok: 'Approve'
+                        input message: "Approve prod deploy of ${env_COMPONENT}@${shortCommit} as ${env_VERSION} under CR ${env_CR_NUMBER}?", ok: 'Approve'
                     }
                 }
             }
             stage('prod-deploy') {
                 when {
-                    expression { params.ENVIRONMENT == 'prod' }
+                    expression { env_ENVIRONMENT == 'prod' }
                 }
                 steps {
                     script {
@@ -416,33 +416,33 @@ def call (Map configMap){
                             // Only attempt a rollback if there's a prior successful release
                             // to roll back to — a failed first-ever deploy has nothing behind it.
                             def releaseExists = sh(
-                                script: "helm status ${params.COMPONENT} -n roboshop-prod > /dev/null 2>&1",
+                                script: "helm status ${env_COMPONENT} -n roboshop-prod > /dev/null 2>&1",
                                 returnStatus: true
                             ) == 0
 
                             try {
                                 sh """
-                                    helm upgrade --install ${params.COMPONENT} ./helm \
+                                    helm upgrade --install ${env_COMPONENT} ./helm \
                                         -f ./helm/values-prod.yaml \
                                         --namespace roboshop-prod \
                                         --create-namespace \
                                         --set deployment.imageVersion=${shortCommit} \
                                         --wait --timeout 5m
 
-                                    kubectl rollout status deployment/${params.COMPONENT} -n roboshop-prod --timeout=120s
+                                    kubectl rollout status deployment/${env_COMPONENT} -n roboshop-prod --timeout=120s
                                 """
-                                utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-prod (CR ${params.CR_NUMBER})", 'prod-deploy')
+                                utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-prod (CR ${env_CR_NUMBER})", 'prod-deploy')
                             }
                             catch (Exception e) {
                                 if (releaseExists) {
-                                    echo "prod-deploy failed on an existing release — rolling back ${params.COMPONENT} in roboshop-prod"
-                                    sh "helm rollback ${params.COMPONENT} 0 -n roboshop-prod --wait --timeout 5m"
+                                    echo "prod-deploy failed on an existing release — rolling back ${env_COMPONENT} in roboshop-prod"
+                                    sh "helm rollback ${env_COMPONENT} 0 -n roboshop-prod --wait --timeout 5m"
                                 } else {
-                                    echo "prod-deploy failed on the first-ever release of ${params.COMPONENT} — nothing to roll back to"
+                                    echo "prod-deploy failed on the first-ever release of ${env_COMPONENT} — nothing to roll back to"
                                 }
                                 utils.updateCommitStatus('failure', 'Deploy to roboshop-prod failed', 'prod-deploy')
-                                if (params.ISSUE_KEY?.trim()) {
-                                    utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Trigger PROD')
+                                if (env_ISSUE_KEY?.trim()) {
+                                    utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger PROD')
                                 }
                                 throw e
                             }
@@ -454,20 +454,18 @@ def call (Map configMap){
             // running further stages once one fails.
             stage('tag-release') {
                 when {
-                    expression { params.ENVIRONMENT == 'prod' }
+                    expression { env_ENVIRONMENT == 'prod' }
                 }
                 steps {
                     script {
-                        utils.tagCommit(params.COMMIT_ID.trim(), params.VERSION.trim())
-                        echo "Tagged ${shortCommit} as ${params.VERSION} (CR ${params.CR_NUMBER})"
-                        if (params.ISSUE_KEY?.trim()) {
-                            utils.transitionJiraIssue(params.ISSUE_KEY.trim(), 'Completed')
+                        utils.tagCommit(env_COMMIT_ID.trim(), env_VERSION.trim())
+                        echo "Tagged ${shortCommit} as ${env_VERSION} (CR ${env_CR_NUMBER})"
+                        if (env_ISSUE_KEY?.trim()) {
+                            utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Completed')
                         }
                     }
                 }
             }
-                } // end nested stages (real pipeline logic)
-            } // end stage('pipeline')
         }
 
         post {
@@ -476,7 +474,7 @@ def call (Map configMap){
                     channel: '#test-ci',
                     color: 'good',
                     tokenCredentialId: 'slack-token',
-                    message: "✅ *${params.COMPONENT ?: component}* ${params.ENVIRONMENT} deploy succeeded — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
+                    message: "✅ *${env_COMPONENT ?: component}* ${env_ENVIRONMENT} deploy succeeded — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
                 ) */
                 echo "success"
             }
@@ -485,7 +483,7 @@ def call (Map configMap){
                     channel: '#test-ci',
                     color: 'danger',
                     tokenCredentialId: 'slack-token',
-                    message: "❌ *${params.COMPONENT ?: component}* ${params.ENVIRONMENT} deploy failed — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
+                    message: "❌ *${env_COMPONENT ?: component}* ${env_ENVIRONMENT} deploy failed — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
                 ) */
                 echo "failure"
             }
