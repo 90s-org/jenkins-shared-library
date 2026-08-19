@@ -250,20 +250,20 @@ def call (Map configMap){
 
         post {
             success {
-                slackSend(
+                /* slackSend(
                     channel: '#test-ci',
                     color: 'good',
                     tokenCredentialId: 'slack-token',
                     message: "✅ *${params.COMPONENT ?: component}* ${params.ENVIRONMENT} deploy succeeded — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
-                )
+                ) */
             }
             failure {
-                slackSend(
+                /* slackSend(
                     channel: '#test-ci',
                     color: 'danger',
                     tokenCredentialId: 'slack-token',
                     message: "❌ *${params.COMPONENT ?: component}* ${params.ENVIRONMENT} deploy failed — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
-                )
+                ) */
             }
         }
     }
