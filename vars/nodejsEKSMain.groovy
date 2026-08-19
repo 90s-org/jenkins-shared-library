@@ -246,7 +246,7 @@ def call (Map configMap){
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Deploy to roboshop-sit failed', 'sit-deploy')
                             if (env_ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger SIT')
+                                utils.safeTransitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger SIT')
                             }
                             throw e
                         }
@@ -283,13 +283,13 @@ def call (Map configMap){
                             }
                             utils.updateCommitStatus('success', 'roboshop-integration-tests passed', 'sit-integration-tests')
                             if (env_ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'SIT Done')
+                                utils.safeTransitionJiraIssue(env_ISSUE_KEY.trim(), 'SIT Done')
                             }
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'roboshop-integration-tests failed', 'sit-integration-tests')
                             if (env_ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger SIT')
+                                utils.safeTransitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger SIT')
                             }
                             throw e
                         }
@@ -322,7 +322,7 @@ def call (Map configMap){
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Deploy to roboshop-uat failed', 'uat-deploy')
                             if (env_ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger UAT')
+                                utils.safeTransitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger UAT')
                             }
                             throw e
                         }
@@ -359,13 +359,13 @@ def call (Map configMap){
                             }
                             utils.updateCommitStatus('success', 'roboshop-regression-tests passed', 'uat-regression-tests')
                             if (env_ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'UAT Done')
+                                utils.safeTransitionJiraIssue(env_ISSUE_KEY.trim(), 'UAT Done')
                             }
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'roboshop-regression-tests failed', 'uat-regression-tests')
                             if (env_ISSUE_KEY?.trim()) {
-                                utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger UAT')
+                                utils.safeTransitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger UAT')
                             }
                             throw e
                         }
@@ -442,7 +442,7 @@ def call (Map configMap){
                                 }
                                 utils.updateCommitStatus('failure', 'Deploy to roboshop-prod failed', 'prod-deploy')
                                 if (env_ISSUE_KEY?.trim()) {
-                                    utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger PROD')
+                                    utils.safeTransitionJiraIssue(env_ISSUE_KEY.trim(), 'Trigger PROD')
                                 }
                                 throw e
                             }
@@ -461,7 +461,7 @@ def call (Map configMap){
                         utils.tagCommit(env_COMMIT_ID.trim(), env_VERSION.trim())
                         echo "Tagged ${shortCommit} as ${env_VERSION} (CR ${env_CR_NUMBER})"
                         if (env_ISSUE_KEY?.trim()) {
-                            utils.transitionJiraIssue(env_ISSUE_KEY.trim(), 'Completed')
+                            utils.safeTransitionJiraIssue(env_ISSUE_KEY.trim(), 'Completed')
                         }
                     }
                 }

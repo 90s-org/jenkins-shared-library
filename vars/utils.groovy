@@ -169,6 +169,15 @@ def createJiraTicket(String projectKey, String commitId, String version) {
 // since transition labels drawn in the workflow diagram aren't guaranteed to
 // be set to anything meaningful.
 def transitionJiraIssue(String issueKey, String targetStatus) {
+    def issue = jiraGetIssue(idOrKey: issueKey)
+    if (!issue.successful) {
+        error("Could not fetch ${issueKey} to check its current status: ${issue.error}")
+    }
+    if (issue.data.fields.status.name == targetStatus) {
+        echo "${issueKey} is already at '${targetStatus}' — nothing to do"
+        return
+    }
+
     def transitions = jiraGetIssueTransitions(idOrKey: issueKey)
     if (!transitions.successful) {
         error("Could not fetch transitions for ${issueKey}: ${transitions.error}")
@@ -181,6 +190,18 @@ def transitionJiraIssue(String issueKey, String targetStatus) {
     def result = jiraTransitionIssue(idOrKey: issueKey, input: [transition: [id: transitionId]])
     if (!result.successful) {
         error("Failed to transition ${issueKey} to '${targetStatus}': ${result.error}")
+    }
+}
+
+// Jira ticket sync is always best-effort: a Jira-side hiccup here must never fail
+// an otherwise-successful stage, overwrite a commit status that already correctly
+// reflects real results, or mask the real exception when called from a catch block.
+def safeTransitionJiraIssue(String issueKey, String targetStatus) {
+    try {
+        transitionJiraIssue(issueKey, targetStatus)
+    }
+    catch (Exception e) {
+        echo "Warning: could not transition Jira ticket ${issueKey} to '${targetStatus}': ${e.message}"
     }
 }
 
