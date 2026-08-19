@@ -18,7 +18,6 @@ def call (Map configMap){
         }
         environment {
             def appVersion = ""
-            def shortCommit = ""
             def issueKey = ""
             // Resolved once in 'resolve-inputs': prefer the Jira webhook's env.* payload
             // (GenericTrigger only ever populates env.*, never params.*) and fall back to
@@ -36,7 +35,7 @@ def call (Map configMap){
             component = configMap.get("component")
             org = "90s-org"
             JIRA_SITE = "roboshop-jira"
-            jiraProjectKey = "D88S"
+            jiraProjectKey = "DAWS90S"
         }
         options {
             disableConcurrentBuilds()
@@ -74,13 +73,13 @@ def call (Map configMap){
             stage('resolve-inputs') {
                 steps {
                     script {
-                        env_ENVIRONMENT = env.ENVIRONMENT?.trim() ?: params.ENVIRONMENT
-                        env_COMMIT_ID   = env.COMMIT_ID?.trim() ?: params.COMMIT_ID
-                        env_COMPONENT   = env.COMPONENT?.trim() ?: params.COMPONENT
-                        env_PROJECT     = env.PROJECT?.trim() ?: params.PROJECT
-                        env_ISSUE_KEY   = env.ISSUE_KEY?.trim() ?: params.ISSUE_KEY
-                        env_VERSION     = env.VERSION?.trim() ?: params.VERSION
-                        env_CR_NUMBER   = env.CR_NUMBER?.trim() ?: params.CR_NUMBER
+                        env_ENVIRONMENT = (env.ENVIRONMENT?.trim() ?: params.ENVIRONMENT)?.trim()
+                        env_COMMIT_ID   = (env.COMMIT_ID?.trim() ?: params.COMMIT_ID)?.trim()
+                        env_COMPONENT   = (env.COMPONENT?.trim() ?: params.COMPONENT)?.trim()
+                        env_PROJECT     = (env.PROJECT?.trim() ?: params.PROJECT)?.trim()
+                        env_ISSUE_KEY   = (env.ISSUE_KEY?.trim() ?: params.ISSUE_KEY)?.trim()
+                        env_VERSION     = (env.VERSION?.trim() ?: params.VERSION)?.trim()
+                        env_CR_NUMBER   = (env.CR_NUMBER?.trim() ?: params.CR_NUMBER)?.trim()
                         echo "Resolved inputs: ENVIRONMENT=${env_ENVIRONMENT} COMMIT_ID=${env_COMMIT_ID} COMPONENT=${env_COMPONENT} PROJECT=${env_PROJECT} ISSUE_KEY=${env_ISSUE_KEY}"
                     }
                 }
@@ -160,9 +159,8 @@ def call (Map configMap){
                 }
                 steps {
                     script {
-                        shortCommit = env.GIT_COMMIT.take(7)
-                        issueKey = utils.createJiraTicket(jiraProjectKey, shortCommit, appVersion)
-                        echo "Created Jira ticket ${issueKey} for ${shortCommit} / ${appVersion}"
+                        issueKey = utils.createJiraTicket(jiraProjectKey, env.GIT_COMMIT, appVersion)
+                        echo "Created Jira ticket ${issueKey} for ${env.GIT_COMMIT} / ${appVersion}"
                     }
                 }
             }
@@ -180,11 +178,11 @@ def call (Map configMap){
                                     aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${acc_id}.dkr.ecr.us-east-1.amazonaws.com
 
                                     docker pull ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion}
-                                    docker tag ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion} ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${shortCommit}
-                                    docker push ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${shortCommit}
+                                    docker tag ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion} ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${env.GIT_COMMIT}
+                                    docker push ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${env.GIT_COMMIT}
                                 """
                             }
-                            utils.updateCommitStatus('success', "Promoted image as ${shortCommit}", 'promote-image')
+                            utils.updateCommitStatus('success', "Promoted image as ${env.GIT_COMMIT}", 'promote-image')
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Image promotion failed', 'promote-image')
@@ -207,7 +205,6 @@ def call (Map configMap){
                         if (!env_COMMIT_ID?.trim()) {
                             error("COMMIT_ID is required when deploying to ${env_ENVIRONMENT}")
                         }
-                        shortCommit = env_COMMIT_ID.trim().take(7)
 
                         def requiredContexts = ['dev-deploy', 'api-tests']
                         if (env_ENVIRONMENT in ['uat', 'prod']) {
@@ -235,13 +232,13 @@ def call (Map configMap){
                                         -f ./helm/values-sit.yaml \
                                         --namespace roboshop-sit \
                                         --create-namespace \
-                                        --set deployment.imageVersion=${shortCommit} \
+                                        --set deployment.imageVersion=${env_COMMIT_ID} \
                                         --wait --timeout 5m
 
                                     kubectl rollout status deployment/${env_COMPONENT} -n roboshop-sit --timeout=120s
                                 """
                             }
-                            utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-sit", 'sit-deploy')
+                            utils.updateCommitStatus('success', "Deployed ${env_COMMIT_ID} to roboshop-sit", 'sit-deploy')
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Deploy to roboshop-sit failed', 'sit-deploy')
@@ -311,13 +308,13 @@ def call (Map configMap){
                                         -f ./helm/values-uat.yaml \
                                         --namespace roboshop-uat \
                                         --create-namespace \
-                                        --set deployment.imageVersion=${shortCommit} \
+                                        --set deployment.imageVersion=${env_COMMIT_ID} \
                                         --wait --timeout 5m
 
                                     kubectl rollout status deployment/${env_COMPONENT} -n roboshop-uat --timeout=120s
                                 """
                             }
-                            utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-uat", 'uat-deploy')
+                            utils.updateCommitStatus('success', "Deployed ${env_COMMIT_ID} to roboshop-uat", 'uat-deploy')
                         }
                         catch (Exception e) {
                             utils.updateCommitStatus('failure', 'Deploy to roboshop-uat failed', 'uat-deploy')
@@ -400,7 +397,7 @@ def call (Map configMap){
                         }
                         echo "CR ${env_CR_NUMBER}: within deployment window"
 
-                        input message: "Approve prod deploy of ${env_COMPONENT}@${shortCommit} as ${env_VERSION} under CR ${env_CR_NUMBER}?", ok: 'Approve'
+                        input message: "Approve prod deploy of ${env_COMPONENT}@${env_COMMIT_ID} as ${env_VERSION} under CR ${env_CR_NUMBER}?", ok: 'Approve'
                     }
                 }
             }
@@ -426,12 +423,12 @@ def call (Map configMap){
                                         -f ./helm/values-prod.yaml \
                                         --namespace roboshop-prod \
                                         --create-namespace \
-                                        --set deployment.imageVersion=${shortCommit} \
+                                        --set deployment.imageVersion=${env_COMMIT_ID} \
                                         --wait --timeout 5m
 
                                     kubectl rollout status deployment/${env_COMPONENT} -n roboshop-prod --timeout=120s
                                 """
-                                utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-prod (CR ${env_CR_NUMBER})", 'prod-deploy')
+                                utils.updateCommitStatus('success', "Deployed ${env_COMMIT_ID} to roboshop-prod (CR ${env_CR_NUMBER})", 'prod-deploy')
                             }
                             catch (Exception e) {
                                 if (releaseExists) {
@@ -459,7 +456,7 @@ def call (Map configMap){
                 steps {
                     script {
                         utils.tagCommit(env_COMMIT_ID.trim(), env_VERSION.trim())
-                        echo "Tagged ${shortCommit} as ${env_VERSION} (CR ${env_CR_NUMBER})"
+                        echo "Tagged ${env_COMMIT_ID} as ${env_VERSION} (CR ${env_CR_NUMBER})"
                         if (env_ISSUE_KEY?.trim()) {
                             utils.safeTransitionJiraIssue(env_ISSUE_KEY.trim(), 'Completed')
                         }
@@ -474,7 +471,7 @@ def call (Map configMap){
                     channel: '#test-ci',
                     color: 'good',
                     tokenCredentialId: 'slack-token',
-                    message: "✅ *${env_COMPONENT ?: component}* ${env_ENVIRONMENT} deploy succeeded — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
+                    message: "✅ *${env_COMPONENT ?: component}* ${env_ENVIRONMENT} deploy succeeded — commit `${env_COMMIT_ID ?: env.GIT_COMMIT}` (<${env.BUILD_URL}console|console>)"
                 ) */
                 echo "success"
             }
@@ -483,7 +480,7 @@ def call (Map configMap){
                     channel: '#test-ci',
                     color: 'danger',
                     tokenCredentialId: 'slack-token',
-                    message: "❌ *${env_COMPONENT ?: component}* ${env_ENVIRONMENT} deploy failed — commit `${shortCommit ?: env.GIT_COMMIT.take(7)}` (<${env.BUILD_URL}console|console>)"
+                    message: "❌ *${env_COMPONENT ?: component}* ${env_ENVIRONMENT} deploy failed — commit `${env_COMMIT_ID ?: env.GIT_COMMIT}` (<${env.BUILD_URL}console|console>)"
                 ) */
                 echo "failure"
             }
