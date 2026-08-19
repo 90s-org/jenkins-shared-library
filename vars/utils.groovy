@@ -97,6 +97,43 @@ def getPodIP(String namespace, String component) {
     return ip
 }
 
+def tagCommit(String commitSha, String tag) {
+    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+        def repoUrl = sh(script: 'git remote get-url origin', returnStdout: true).trim()
+        def repoPath = repoUrl.replaceAll(/.*github\.com[\/:]/, '').replaceAll(/\.git$/, '')
+
+        withEnv([
+            "REPO_PATH=${repoPath}",
+            "COMMIT_SHA=${commitSha}",
+            "TAG_NAME=${tag}"
+        ]) {
+            sh '''
+                HTTP_STATUS=$(jq -n \
+                    --arg ref "refs/tags/$TAG_NAME" \
+                    --arg sha "$COMMIT_SHA" \
+                    '{ref: $ref, sha: $sha}' \
+                | curl -s \
+                       -o tag-response.json \
+                       -w "%{http_code}" \
+                       -X POST \
+                       -H "Authorization: Bearer $GITHUB_TOKEN" \
+                       -H "Accept: application/vnd.github+json" \
+                       -H "X-GitHub-Api-Version: 2022-11-28" \
+                       --data @- \
+                       "https://api.github.com/repos/$REPO_PATH/git/refs")
+
+                if [ "$HTTP_STATUS" -lt 200 ] || [ "$HTTP_STATUS" -ge 300 ]; then
+                    echo "Failed to tag commit $COMMIT_SHA as $TAG_NAME (HTTP $HTTP_STATUS):"
+                    cat tag-response.json
+                    rm -f tag-response.json
+                    exit 1
+                fi
+                rm -f tag-response.json
+            '''
+        }
+    }
+}
+
 def createPullRequest(String base = 'main', String title = '', String body = '') {
     withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
         def repoUrl = sh(script: 'git remote get-url origin', returnStdout: true).trim()

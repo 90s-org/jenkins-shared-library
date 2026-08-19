@@ -12,6 +12,8 @@ def call (Map configMap){
             string(name: 'COMMIT_ID', defaultValue: '', description: 'Commit SHA to promote (required for sit/uat/prod)')
             string(name: 'COMPONENT', defaultValue: 'catalogue', description: 'Component to deploy')
             string(name: 'PROJECT', defaultValue: 'roboshop', description: 'Project name')
+            string(name: 'CR_NUMBER', defaultValue: '', description: 'Change Request number (required for prod deploy)')
+            string(name: 'VERSION', defaultValue: '', description: 'Release version to tag the commit with on a successful prod deploy, e.g. v1.4.0 (required for prod deploy)')
         }
         environment {
             def appVersion = ""
@@ -136,6 +138,9 @@ def call (Map configMap){
                         def requiredContexts = ['dev-deploy', 'api-tests']
                         if (params.ENVIRONMENT in ['uat', 'prod']) {
                             requiredContexts += ['sit-deploy', 'sit-integration-tests']
+                        }
+                        if (params.ENVIRONMENT == 'prod') {
+                            requiredContexts += ['uat-deploy', 'uat-regression-tests']
                         }
                         utils.validateCommitStatus(params.COMMIT_ID.trim(), requiredContexts)
                     }
@@ -275,12 +280,92 @@ def call (Map configMap){
                     }
                 }
             }
+            // CR gate: number + version must be supplied, deploy must fall inside the
+            // approved window, and a human has to click approve. Runs with its own
+            // timeout so waiting on a person doesn't get killed by the pipeline's
+            // overall 15-minute budget.
+            stage('change-request-check') {
+                when {
+                    expression { params.ENVIRONMENT == 'prod' }
+                }
+                options {
+                    timeout(time: 4, unit: 'HOURS')
+                }
+                steps {
+                    script {
+                        if (!params.CR_NUMBER?.trim()) {
+                            error("CR_NUMBER is required for a prod deploy")
+                        }
+                        if (!params.VERSION?.trim()) {
+                            error("VERSION is required for a prod deploy")
+                        }
+
+                        // Dummy deployment-window check — placeholder until this is wired
+                        // up to a real CR system. Blocks weekend prod deploys for now.
+                        def dayOfWeek = sh(script: 'date +%u', returnStdout: true).trim().toInteger()
+                        if (dayOfWeek >= 6) {
+                            error("CR ${params.CR_NUMBER}: outside the approved deployment window (no weekend prod deploys) — dummy check, replace with a real CR window lookup")
+                        }
+                        echo "CR ${params.CR_NUMBER}: within deployment window"
+
+                        input message: "Approve prod deploy of ${params.COMPONENT}@${shortCommit} as ${params.VERSION} under CR ${params.CR_NUMBER}?", ok: 'Approve'
+                    }
+                }
+            }
             stage('prod-deploy') {
                 when {
                     expression { params.ENVIRONMENT == 'prod' }
                 }
                 steps {
-                    echo "PROD deploy — not implemented yet"
+                    script {
+                        withAWS(credentials: 'aws-creds', region: 'us-east-1') {
+                            sh "aws eks update-kubeconfig --name roboshop --region us-east-1"
+
+                            // Only attempt a rollback if there's a prior successful release
+                            // to roll back to — a failed first-ever deploy has nothing behind it.
+                            def releaseExists = sh(
+                                script: "helm status ${params.COMPONENT} -n roboshop-prod > /dev/null 2>&1",
+                                returnStatus: true
+                            ) == 0
+
+                            try {
+                                sh """
+                                    helm upgrade --install ${params.COMPONENT} ./helm \
+                                        -f ./helm/values-prod.yaml \
+                                        --namespace roboshop-prod \
+                                        --create-namespace \
+                                        --set deployment.imageVersion=${shortCommit} \
+                                        --wait --timeout 5m
+
+                                    kubectl rollout status deployment/${params.COMPONENT} -n roboshop-prod --timeout=120s
+                                """
+                                utils.updateCommitStatus('success', "Deployed ${shortCommit} to roboshop-prod (CR ${params.CR_NUMBER})", 'prod-deploy')
+                            }
+                            catch (Exception e) {
+                                if (releaseExists) {
+                                    echo "prod-deploy failed on an existing release — rolling back ${params.COMPONENT} in roboshop-prod"
+                                    sh "helm rollback ${params.COMPONENT} 0 -n roboshop-prod --wait --timeout 5m"
+                                } else {
+                                    echo "prod-deploy failed on the first-ever release of ${params.COMPONENT} — nothing to roll back to"
+                                }
+                                utils.updateCommitStatus('failure', 'Deploy to roboshop-prod failed', 'prod-deploy')
+                                throw e
+                            }
+                        }
+                    }
+                }
+            }
+            // Only reached if prod-deploy succeeded — declarative pipeline stops
+            // running further stages once one fails.
+            stage('tag-release') {
+                when {
+                    expression { params.ENVIRONMENT == 'prod' }
+                }
+                steps {
+                    script {
+                        utils.tagCommit(params.COMMIT_ID.trim(), params.VERSION.trim())
+                        echo "Tagged ${shortCommit} as ${params.VERSION} (CR ${params.CR_NUMBER})"
+                    }
                 }
             }
         }
